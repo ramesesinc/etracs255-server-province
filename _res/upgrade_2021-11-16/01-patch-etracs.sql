@@ -2717,3 +2717,25 @@ where raf.objid = d.objid
 
 delete from af_control_detail where reftype='remittance' and txntype = 'forward' 
 ; 
+
+
+insert into sys_usergroup_member (
+  objid, usergroup_objid, user_objid, user_username, user_firstname, user_lastname 
+) 
+select * 
+from ( 
+  select 
+    concat('UGM-',MD5(concat(u.objid, ug.objid))) as objid, 
+    ug.objid as usergroup_objid, u.objid as user_objid, 
+    u.username as user_username, u.firstname as user_firstname, u.lastname as user_lastname
+  from sys_user u, sys_usergroup ug 
+  where u.username='admin'
+    and ug.domain='TREASURY' 
+    and ug.objid in ('TREASURY.AFO_ADMIN','TREASURY.COLLECTOR_ADMIN','TREASURY.LIQ_OFFICER_ADMIN','TREASURY.MANAGER')
+)t0 
+where (
+  select count(*) from sys_usergroup_member 
+  where usergroup_objid = t0.usergroup_objid 
+    and user_objid = t0.user_objid 
+) = 0 
+;
