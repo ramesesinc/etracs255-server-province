@@ -2,6 +2,7 @@ import com.rameses.annotations.*;
 import java.io.File;
 import com.rameses.fileupload.*;
 import org.apache.commons.lang.exception.ExceptionUtils;
+import java.util.concurrent.*;
 
 class DownloadTask {
     @XConnection('fileupload')
@@ -19,6 +20,9 @@ class DownloadTask {
     @DataContext('rpt_syncdata_error')
     def em_sync_error
 
+    @DataContext('rpt_syncdata_fordownload')
+    def em_sync_fordownload
+
     @Service('Var')
     def var;
 
@@ -27,52 +31,69 @@ class DownloadTask {
 
     def DOWNLOAD_FLAG = "fileserver_download_task_active"
 
-    @Schedule(interval=300)
-    public void doDownload( evt ) {
+    @Schedule(interval=120)
+    public void downloadFiles( evt ) {
         if (!downloaderActive()) return
+        if (hasFileForDownload()) return;
 
+        println 'DownloadTask [INFO] Fetching files for download'
         try {
-            fu.getList().each{
-                download(it);
+            fu.getList().each {
+                try {
+                    def fordownload = [:];
+                    fordownload.objid = it.Key
+                    fordownload.etag = it.ETag
+                    fordownload.error = false
+                    em_sync_fordownload.create(fordownload);
+                } catch(err) {
+                    err.printStackTrace();
+                    //ignore possible duplicate error
+                }
             }
         } catch ( e ) {
             println "DownlaodTask [ERROR] " + e.message;
         }
     }
 
-    @Schedule(interval=900)
-    public void rescheduleErrors( evt ) {
-        mgmtSvc.rescheduleErrors();
-    }
+    @Schedule(interval=1)
+    public void downloadFile( evt ) {
+        def downloadfile = em_sync_fordownload.where('error = 0').orderBy('objid').first()
+        if (!downloadfile) {
+            waitTimeout(5);
+            return;
+        }
 
-    void download(downloadinfo) {
         def reader = null;
         def syncdata = null;
         try {
-            syncdata = em_sync_error.find([filekey: downloadinfo.Key]).first();
-            if (syncdata) {
-                println 'DownloadTask [HOLD] Key ' + downloadinfo.Key
-                return;
-            }
-            reader = fu.getObject(downloadinfo.Key);
+            reader = fu.getObject(downloadfile.objid);
             syncdata = reader.read();
             syncdata.data = reader.read(); 
             svc.receive(syncdata);
             syncdata.dtcreated = dtSvc.serverDate;
             em_sync_completed.save(syncdata);
             reader.close();
-            fu.delete(downloadinfo.Key);
+            fu.delete(downloadfile.objid);
+            em_sync_fordownload.find([objid: downloadfile.objid]).delete();
         } catch (e) {
             println 'DownloadTask [ERROR] ' + e.message
             if (syncdata) {
-                syncdata.filekey = downloadinfo.Key;
+                syncdata.filekey = downloadfile.objid;
                 syncdata.error = ExceptionUtils.getStackTrace(e);
                 syncdata.info = syncdata.info ? syncdata.info : [:]
                 syncdata.remote = syncdata.parent.remote
                 em_sync_error.create(syncdata);
+                em_sync_fordownload.find([objid: downloadfile.objid]).update([error: 1]);
             }
             if (reader) reader.close();
         }
+    }
+
+    @Schedule(interval=300)
+    public void rescheduleErrors( evt ) {
+        if (hasFileForDownload()) return;
+        println 'DownloadTask [INFO] Rescheduling downloads with error...'
+        mgmtSvc.rescheduleErrors();
     }
 
     def downloaderActive() {
@@ -82,6 +103,17 @@ class DownloadTask {
         }
         println 'DownloadTask [INFO] inactive' ;
         return false;
+    }
+
+    def hasFileForDownload() {
+        def downloadfile = em_sync_fordownload.where('error = 0').first()
+        return downloadfile != null
+    }
+
+    void waitTimeout(secs) {
+        println 'Waiting for ' + secs + ' seconds';
+        def queue = new LinkedBlockingQueue();
+        queue.poll(secs, TimeUnit.SECONDS);
     }
 
 }
