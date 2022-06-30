@@ -27,6 +27,9 @@ public class RPTBillingService
 	@DataContext('rptledger_item')
 	def em_rptledger_item
 
+	@DataContext('paymentorder_type')
+	def em_paymentorder_type
+
 	@DataContext('collectiontype')
 	def em_collectiontype
 
@@ -61,6 +64,8 @@ public class RPTBillingService
 	def FACT_PACKAGE 		= 'rptbilling.'
 	def MAX_ADVANCE_YEARS 	= 3 
 	def BARCODE_KEY 		= '56001'
+
+    def PAYMENTORDER_TYPE = 'RPT'
 
 	
 	@ProxyMethod
@@ -109,17 +114,15 @@ public class RPTBillingService
 			throw new Exception('Invalid barcode or associated bill has already expired.')
 		}
 
-		if (bill.expirydate <= dtSvc.serverDate) {
+		def islocaltxn =  params._txntype == null || params._txntype != "FILIPIZEN"
+
+		if (islocaltxn && bill.expirydate <= dtSvc.serverDate) {
 			throw new Exception('Bill has already expired.')
 		}
 
-		bill.collectiontype = em_collectiontype.find([formno:'56', barcodekey:BARCODE_KEY]).first()
-		if (!bill.collectiontype){
-			bill.collectiontype = em_collectiontype.find([formno:'56CON', barcodekey:BARCODE_KEY]).first()
-		}
-		if (!bill.collectiontype){
-			bill.collectiontype = em_collectiontype.find([formno:'5156', barcodekey:BARCODE_KEY]).first()
-		}
+        def potype = em_paymentorder_type.find([objid: PAYMENTORDER_TYPE]).first()
+        bill.collectiontype = em_collectiontype.find([objid: potype?.collectiontype?.objid]).first()
+
 		if (!bill.collectiontype) {
 			throw new Exception('Collection Type is not defined for barcode key ' + BARCODE_KEY + '.')
 		}
@@ -458,7 +461,7 @@ public class RPTBillingService
 			item.qtr = first.qtr 
 			item.originalav = first.rptledgerfaas.assessedvalue 
 			item.taxdifference = first.taxdifference
-				item.period =  buildPeriod(bill, list, minyear)
+			item.period =  buildPeriod(bill, list, minyear)
 			item.periodqtrs = buildPeriodQuarters(bill, list, minyear)
 			item.total = 0.0 
 			item.flag = ''
@@ -565,15 +568,15 @@ public class RPTBillingService
 
 	def getStartEndQtr(bill, list, minyear) {
         def firstitem = list.first()
+				def lastitem = list.last()
 
         def startqtr = 1
         def endqtr = 4
 
-								if (minyear < bill.rptledger.lastyearpaid ) {
+				if (minyear < bill.rptledger.lastyearpaid ) {
             //taxcredit
-            if (firstitem.qtr != null) {
-                startqtr = firstitem.qtr
-            }            
+            if (firstitem.qtr != null) startqtr = firstitem.qtr
+						if (lastitem.qtr != null) endqtr = lastitem.qtr
         } else if (bill.billtoyear == firstitem.year) {
             if (firstitem.qtr == null) {
                 if (firstitem.year == minyear) {
@@ -582,7 +585,7 @@ public class RPTBillingService
                 endqtr = bill.billtoqtr
             } else {
                 startqtr = firstitem.qtr 
-                endqtr = list.last().qtr
+                endqtr = lastitem.qtr
             }
         } else if (firstitem.year == minyear) {
             if (firstitem.qtr == null) {

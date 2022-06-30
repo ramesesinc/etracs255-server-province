@@ -230,6 +230,7 @@ class SubdivisionService
         em.deleteMotherLandAffectedRpus(motherland)
         em.delete(motherland, SCHEMA_MOTHER_LAND)
         updateMotherLandInfo([objid:motherland.subdivisionid])
+        txnRef.deleteByObjid(motherland.subdivisionid, motherland.landfaasid)
     }
 
 
@@ -990,7 +991,7 @@ class SubdivisionService
 
         def param  = [
             objid : land.assistant.objid,
-            section: land.rp.section,
+            section: land.rp.isection,
             parcel: land.rp.iparcel
         ]
         def assistItem = getAssistItem(param)
